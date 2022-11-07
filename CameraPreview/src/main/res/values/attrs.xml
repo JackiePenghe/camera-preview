@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <declare-styleable name="CameraPreviewView">
+        <attr name="cameraVersion" format="enum">
+            <enum name="auto" value="0x00" />
+            <enum name="legacy" value="0x01" />
+            <enum name="camera2" value="0x02" />
+        </attr>
+    </declare-styleable>
+</resources>
