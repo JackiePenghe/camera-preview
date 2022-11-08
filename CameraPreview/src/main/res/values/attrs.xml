@@ -1,10 +1,26 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <declare-styleable name="CameraPreviewView">
+        <!--    相机预览方案    -->
         <attr name="cameraVersion" format="enum">
+            <!--      自动判断      -->
             <enum name="auto" value="0x00" />
+            <!--      使用旧版相机      -->
             <enum name="legacy" value="0x01" />
+            <!--      使用camera2      -->
             <enum name="camera2" value="0x02" />
         </attr>
+        <!--    RGB相机ID（仅在多个摄像头时可用）    -->
+        <attr name="rgbCameraId" format="integer" />
+        <!--    相机预览分辨率-宽度    -->
+        <attr name="previewWidth" format="integer" />
+        <!--    相机预览分辨率-高度    -->
+        <attr name="previewHeight" format="integer" />
+        <!--    相机旋转角度（0，90，180，270）    -->
+        <attr name="cameraRotation" format="integer" />
+        <!--    是否使用圆形预览    -->
+        <attr name="enableRoundPreview" format="boolean" />
+        <!--    是否交换宽高比    -->
+        <attr name="needExchangeWidthAndHeight" format="boolean" />
     </declare-styleable>
 </resources>

@@ -4,8 +4,16 @@ import android.content.Context
 import android.hardware.camera2.CameraManager
 import com.quicknew.camerapreview.utils.debugEnabled
 import com.quicknew.camerapreview.utils.warnOut
+import java.util.concurrent.ThreadFactory
 
 object CameraManagement {
+
+    /**
+     * 线程工厂
+     */
+    internal val threadFactory = ThreadFactory {
+        Thread(it)
+    }
 
     /**
      * 相机ID列表

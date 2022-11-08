@@ -14,8 +14,14 @@ class MainActivity : AppCompatActivity() {
         setContentView(binding.root)
     }
 
-    override fun onPostResume() {
-        super.onPostResume()
+
+    override fun onResume() {
+        super.onResume()
         binding.cameraPreviewView.startPreview()
+    }
+
+    override fun onPause() {
+        super.onPause()
+        binding.cameraPreviewView.stopPreview()
     }
 }
