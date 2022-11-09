@@ -22,6 +22,7 @@ import com.quicknew.camerapreview.CameraManagement.cameraNumbers
 import com.quicknew.camerapreview.CameraManagement.isInit
 import com.quicknew.camerapreview.CameraManagement.threadFactory
 import com.quicknew.camerapreview.R
+import com.quicknew.camerapreview.interfaces.FrameListener
 import com.quicknew.camerapreview.utils.*
 import java.util.concurrent.Executor
 import java.util.concurrent.ScheduledThreadPoolExecutor
@@ -116,6 +117,16 @@ class CameraPreviewView @JvmOverloads constructor(
      */
     private var needExchangeWidthAndHeight: Boolean = false
 
+    /**
+     * 是否开启镜像
+     */
+    private var mirrored: Boolean = false
+
+    /**
+     * 是否启用双目摄像头
+     */
+    private var useMultipleCamera: Boolean = true
+
     /* * * * * * * * * * * * * * * * * * * 可空属性 * * * * * * * * * * * * * * * * * * */
 
     /**
@@ -150,6 +161,7 @@ class CameraPreviewView @JvmOverloads constructor(
      * camera2预览的Surface
      */
     private var camera2PreviewSurface: Surface? = null
+    private var camera2PreviewSurfaceTexture: SurfaceTexture? = null
 
     /**
      * camera2Ir的Surface
@@ -180,6 +192,11 @@ class CameraPreviewView @JvmOverloads constructor(
      * camera2 双目相机-IR相机会话请求
      */
     private var camera2IrCaptureRequest: CaptureRequest? = null
+
+    /**
+     * 相机数据帧回调
+     */
+    private var frameListener: FrameListener? = null
 
     /* * * * * * * * * * * * * * * * * * * 可变属性 * * * * * * * * * * * * * * * * * * */
 
@@ -216,7 +233,11 @@ class CameraPreviewView @JvmOverloads constructor(
         override fun onSurfaceTextureAvailable(surface: SurfaceTexture, width: Int, height: Int) {
             warnOut("preview onSurfaceTextureAvailable")
             if (camera2PreviewSurface == null) {
+                camera2PreviewSurfaceTexture = surface
                 camera2PreviewSurface = Surface(surface)
+                camera2PreviewSurfaceTexture?.setOnFrameAvailableListener {
+                    warnOut("camera2PreviewSurfaceTexture FrameAvailableListener")
+                }
             }
             if (cameraNumbers == 1) {
                 openCamera()
@@ -237,7 +258,6 @@ class CameraPreviewView @JvmOverloads constructor(
         }
 
         override fun onSurfaceTextureUpdated(surface: SurfaceTexture) {
-
         }
     }
 
@@ -272,8 +292,15 @@ class CameraPreviewView @JvmOverloads constructor(
      */
     @Suppress("DEPRECATION")
     private val cameraLegacySinglePreviewCallback = Camera.PreviewCallback { data, camera ->
-        warnOut("旧版相机的单目相机预览数据回调")
-        //TODO
+        frameCallbackHandler.post {
+            frameListener?.frameDataLegacy(
+                data,
+                isMultipleCamera = false,
+                isRgbData = true,
+                previewWidth,
+                previewHeight
+            )
+        }
     }
 
     /**
@@ -281,8 +308,15 @@ class CameraPreviewView @JvmOverloads constructor(
      */
     @Suppress("DEPRECATION")
     private val cameraLegacyRgbPreviewCallback = Camera.PreviewCallback { data, camera ->
-        warnOut("旧版相机的双目RGB相机预览相关回调")
-        //TODO
+        frameCallbackHandler.post {
+            frameListener?.frameDataLegacy(
+                data,
+                isMultipleCamera = false,
+                isRgbData = true,
+                previewWidth,
+                previewHeight
+            )
+        }
     }
 
     /**
@@ -290,8 +324,15 @@ class CameraPreviewView @JvmOverloads constructor(
      */
     @Suppress("DEPRECATION")
     private val cameraLegacyIRPreviewCallback = Camera.PreviewCallback { data, camera ->
-        warnOut("旧版相机的双目IR相机预览相关回调")
-        //TODO
+        frameCallbackHandler.post {
+            frameListener?.frameDataLegacy(
+                data,
+                isMultipleCamera = false,
+                isRgbData = true,
+                previewWidth,
+                previewHeight
+            )
+        }
     }
 
     /**
@@ -405,7 +446,6 @@ class CameraPreviewView @JvmOverloads constructor(
         ) {
             super.onCaptureProgressed(session, request, partialResult)
             hasProcess = true
-            //TODO
         }
 
         override fun onCaptureCompleted(
@@ -565,6 +605,12 @@ class CameraPreviewView @JvmOverloads constructor(
         ) {
             super.onCaptureStarted(session, request, timestamp, frameNumber)
             hasProcess = false
+            //TODO 触发回调
+//            if (useMultipleCamera) {
+//
+//            } else {
+//                camera2PreviewSurface?.
+//            }
         }
 
         override fun onCaptureProgressed(
@@ -583,15 +629,15 @@ class CameraPreviewView @JvmOverloads constructor(
             result: TotalCaptureResult
         ) {
             super.onCaptureCompleted(session, request, result)
-            if (!isCamera2FullSupport()) {
-                if (!hasProcess) {
-                    errorOut("camera2 RGB相机 没有可处理的数据帧")
-                }
-            } else {
-                if (!hasProcess) {
-                    warnOut("camera2 RGB相机 没有可处理的数据帧")
-                }
-            }
+//            if (!isCamera2FullSupport()) {
+//                if (!hasProcess) {
+//                    errorOut("camera2 RGB相机 没有可处理的数据帧")
+//                }
+//            } else {
+//                if (!hasProcess) {
+//                    warnOut("camera2 RGB相机 没有可处理的数据帧")
+//                }
+//            }
         }
     }
 
@@ -628,15 +674,15 @@ class CameraPreviewView @JvmOverloads constructor(
             result: TotalCaptureResult
         ) {
             super.onCaptureCompleted(session, request, result)
-            if (!isCamera2FullSupport()) {
-                if (!hasProcess) {
-                    errorOut("camera2 IR相机 没有可处理的数据帧")
-                }
-            } else {
-                if (!hasProcess) {
-                    warnOut("camera2 IR相机 没有可处理的数据帧")
-                }
-            }
+//            if (!isCamera2FullSupport()) {
+//                if (!hasProcess) {
+//                    errorOut("camera2 IR相机 没有可处理的数据帧")
+//                }
+//            } else {
+//                if (!hasProcess) {
+//                    warnOut("camera2 IR相机 没有可处理的数据帧")
+//                }
+//            }
         }
     }
 
@@ -658,6 +704,11 @@ class CameraPreviewView @JvmOverloads constructor(
             warnOut("camera2双目相机-IR相机会话创建失败")
         }
     }
+
+    private val frameCallbackHandlerThread =
+        HandlerThread("frameCallbackHandlerThread").apply { start() }
+
+    private val frameCallbackHandler: Handler = Handler(frameCallbackHandlerThread.looper)
 
     /* * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * *
      *
@@ -746,6 +797,13 @@ class CameraPreviewView @JvmOverloads constructor(
         }
     }
 
+    /**
+     * 设置数据帧回调
+     */
+    fun setFrameListener(frameListener: FrameListener?) {
+        this.frameListener = frameListener
+    }
+
     /* * * * * * * * * * * * * * * * * * * 自定义属性相关方法 * * * * * * * * * * * * * * * * * * */
 
     /**
@@ -778,6 +836,13 @@ class CameraPreviewView @JvmOverloads constructor(
     }
 
     /**
+     * 获取相机旋转角度
+     */
+    fun getCameraRotation(): Int {
+        return cameraRotation
+    }
+
+    /**
      * 设置是否使用圆形预览
      */
     fun setEnableRoundPreview(enableRoundPreview: Boolean) {
@@ -789,6 +854,20 @@ class CameraPreviewView @JvmOverloads constructor(
      */
     fun setNeedExchangeWidthAndHeight(needExchangeWidthAndHeight: Boolean) {
         this.needExchangeWidthAndHeight = needExchangeWidthAndHeight
+    }
+
+    /**
+     * 设置是否开启镜像
+     */
+    fun setMirrored(mirrored: Boolean) {
+        this.mirrored = mirrored
+    }
+
+    /**
+     * 是否开启镜像
+     */
+    fun isMirrored(): Boolean {
+        return mirrored
     }
 
     /* * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * *
@@ -829,6 +908,12 @@ class CameraPreviewView @JvmOverloads constructor(
             R.styleable.CameraPreviewView_needExchangeWidthAndHeight, false
         )
         warnOut("是否交换宽高比 $needExchangeWidthAndHeight")
+        mirrored =
+            obtainStyledAttributes.getBoolean(R.styleable.CameraPreviewView_cameraMirror, false)
+        warnOut("是否镜像展示画面 $mirrored")
+        useMultipleCamera =
+            obtainStyledAttributes.getBoolean(R.styleable.CameraPreviewView_useMultipleCamera, true)
+        warnOut("是否启用双目摄像头 $useMultipleCamera")
         obtainStyledAttributes.recycle()
     }
 
@@ -880,11 +965,15 @@ class CameraPreviewView @JvmOverloads constructor(
             camera2Handler = Handler(camera2HandlerThread.looper)
             previewTextureView.surfaceTexture?.setDefaultBufferSize(previewWidth, previewHeight)
         }
-        if (cameraNumbers == 1) {
-            openCamera2SingleCamera()
+        if (useMultipleCamera) {
+            if (cameraNumbers == 1) {
+                openCamera2SingleCamera()
+            } else {
+                warnOut("开启多个摄像头")
+                openCamera2MultiCamera()
+            }
         } else {
-            warnOut("开启多个摄像头")
-            openCamera2MultiCamera()
+            openCamera2SingleCamera()
         }
     }
 
@@ -892,11 +981,15 @@ class CameraPreviewView @JvmOverloads constructor(
      * 使用旧版相机进行预览
      */
     private fun openLegacy() {
-        if (cameraNumbers == 1) {
-            openLegacySingleCamera()
+        if (useMultipleCamera) {
+            if (cameraNumbers == 1) {
+                openLegacySingleCamera()
+            } else {
+                warnOut("开启多个摄像头")
+                openLegacyMultiCamera()
+            }
         } else {
-            warnOut("开启多个摄像头")
-            openLegacyMultiCamera()
+            openLegacySingleCamera()
         }
     }
 
@@ -1083,6 +1176,11 @@ class CameraPreviewView @JvmOverloads constructor(
      */
     private fun addPreviewViews() {
         if (faceRelativeLayout.childCount > 0) {
+            if (mirrored) {
+                previewTextureView.scaleX = -1f
+            } else {
+                previewTextureView.scaleX = 1f
+            }
             return
         }
 
@@ -1091,7 +1189,11 @@ class CameraPreviewView @JvmOverloads constructor(
 
         previewTextureView = CameraTextureView(context)
         faceRelativeLayout.addView(previewTextureView)
-
+        if (mirrored) {
+            previewTextureView.scaleX = -1f
+        } else {
+            previewTextureView.scaleX = 1f
+        }
         val layoutParamsPreview = previewTextureView.layoutParams
         layoutParamsPreview.width = ViewGroup.LayoutParams.MATCH_PARENT
         layoutParamsPreview.height = ViewGroup.LayoutParams.MATCH_PARENT

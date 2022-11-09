@@ -22,5 +22,9 @@
         <attr name="enableRoundPreview" format="boolean" />
         <!--    是否交换宽高比    -->
         <attr name="needExchangeWidthAndHeight" format="boolean" />
+        <!--    是否镜像展示画面内容    -->
+        <attr name="cameraMirror" format="boolean" />
+        <!--    是否启用双目摄像头    -->
+        <attr name="useMultipleCamera" format="boolean" />
     </declare-styleable>
 </resources>
