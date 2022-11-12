@@ -36,7 +36,7 @@ internal var faceCameraViewTopOffset = 0
 /**
  * 人脸预览区域偏移量-底部
  */
-internal var faceCameraViewDownOffset = 0
+internal var faceCameraViewBottomOffset = 0
 
 /**
  * 是否使用圆形预览

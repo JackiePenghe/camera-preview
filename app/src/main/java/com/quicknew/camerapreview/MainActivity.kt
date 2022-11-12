@@ -1,10 +1,7 @@
 package com.quicknew.camerapreview
 
-import android.graphics.Rect
 import android.media.Image
 import android.os.Bundle
-import android.os.Handler
-import android.os.Looper
 import androidx.appcompat.app.AppCompatActivity
 import com.quicknew.camerapreview.databinding.ActivityMainBinding
 import com.quicknew.camerapreview.interfaces.FrameListener
@@ -53,9 +50,6 @@ class MainActivity : AppCompatActivity() {
         setContentView(binding.root)
 
         binding.cameraPreviewView.setFrameListener(frameListener)
-        Handler(Looper.getMainLooper()).postDelayed({
-            binding.cameraPreviewView.isCoordinatesOutScreen(Rect())
-        }, 2000)
     }
 
 

@@ -819,72 +819,65 @@ class CameraPreviewView @JvmOverloads constructor(
     /**
      * 判断坐标是否超出屏幕区域
      */
+    @Suppress("unused")
     fun isCoordinatesOutScreen(rect: Rect): Boolean {
-        if (needExchangeWidthAndHeight) {
-            rect.left = (rect.left * proportion(faceCameraViewWidth, previewWidth)).toInt()
-            rect.right = (rect.right * proportion(
-                faceCameraViewWidth,
-                previewWidth
-            )).toInt()
-            rect.top = (rect.top * proportion(
-                faceCameraViewHeight,
-                previewHeight
-            )).toInt()
-            rect.bottom = (rect.bottom * proportion(
-                faceCameraViewHeight,
-                previewHeight
-            )).toInt()
+        val cameraWidth: Int
+        val cameraHeight: Int
+        if (!needExchangeWidthAndHeight) {
+            cameraWidth = previewWidth
+            cameraHeight = previewHeight
         } else {
-            rect.left = (rect.left * proportion(
-                faceCameraViewWidth,
-                previewHeight
-            )).toInt()
-            rect.right = (rect.right * proportion(
-                faceCameraViewWidth,
-                previewHeight
-            )).toInt()
-            rect.top = (rect.top * proportion(
-                faceCameraViewHeight,
-                previewWidth
-            )).toInt()
-            rect.bottom = (rect.bottom * proportion(
-                faceCameraViewHeight,
-                previewWidth
-            )).toInt()
+            cameraWidth = previewHeight
+            cameraHeight = previewWidth
         }
+        val leftCoordinate = (rect.left * proportion(faceCameraViewWidth, cameraWidth)).toInt()
+        val topCoordinate = (rect.top * proportion(
+            faceCameraViewHeight,
+            cameraHeight
+        )).toInt()
+        val rightCoordinate = (rect.right * proportion(
+            faceCameraViewWidth,
+            cameraWidth
+        )).toInt()
+        val bottomCoordinate = (rect.bottom * proportion(
+            faceCameraViewHeight,
+            cameraHeight
+        )).toInt()
 
         //判断是否为圆形
         return if (enableCirclePreview) {
             (isOutCircle(
-                rect.left,
-                rect.top,
+                leftCoordinate,
+                topCoordinate,
                 roundX,
                 roundY,
                 radius
             )
                     || isOutCircle(
-                rect.left,
-                rect.bottom,
+                leftCoordinate,
+                bottomCoordinate,
                 roundX,
                 roundY,
                 radius
             )
                     || isOutCircle(
-                rect.right,
-                rect.top,
+                rightCoordinate,
+                topCoordinate,
                 roundX,
                 roundY,
                 radius
             )
                     || isOutCircle(
-                rect.right,
-                rect.bottom,
+                rightCoordinate,
+                bottomCoordinate,
                 roundX,
                 roundY,
                 radius
             ))
         } else {
-            rect.left < faceCameraViewLeftOffset || rect.right > faceCameraViewRightOffset || rect.top < faceCameraViewTopOffset || rect.bottom > faceCameraViewDownOffset
+            warnOut("预览图像区域：$faceCameraViewLeftOffset $faceCameraViewTopOffset $faceCameraViewRightOffset $faceCameraViewBottomOffset")
+            warnOut("坐标计算值：$leftCoordinate $topCoordinate $rightCoordinate $bottomCoordinate")
+            leftCoordinate < faceCameraViewLeftOffset || rightCoordinate > faceCameraViewRightOffset || topCoordinate < faceCameraViewTopOffset || bottomCoordinate > faceCameraViewBottomOffset
         }
     }
 
@@ -1233,7 +1226,7 @@ class CameraPreviewView @JvmOverloads constructor(
             faceCameraViewLeftOffset = 0
             faceCameraViewRightOffset = surfaceViewWidth
             faceCameraViewTopOffset = 0
-            faceCameraViewDownOffset = surfaceViewHeight
+            faceCameraViewBottomOffset = surfaceViewHeight
         } else  //如果相机与画布比例不等 ，计算画布大小 以及识别范围
             if (proportion(
                     surfaceViewWidth, cameraWidth
@@ -1252,7 +1245,7 @@ class CameraPreviewView @JvmOverloads constructor(
                 faceCameraViewLeftOffset = 0
                 faceCameraViewRightOffset = surfaceViewWidth
                 faceCameraViewTopOffset = -layoutParams.topMargin
-                faceCameraViewDownOffset = -layoutParams.topMargin + surfaceViewHeight
+                faceCameraViewBottomOffset = -layoutParams.topMargin + surfaceViewHeight
             } //如果相机与画布比例不等 ，计算画布大小 以及识别范围
             else {
                 layoutParams.width = (cameraWidth * proportion(
@@ -1266,7 +1259,7 @@ class CameraPreviewView @JvmOverloads constructor(
                 faceCameraViewLeftOffset = -layoutParams.leftMargin
                 faceCameraViewRightOffset = -layoutParams.leftMargin + surfaceViewWidth
                 faceCameraViewTopOffset = 0
-                faceCameraViewDownOffset = surfaceViewHeight
+                faceCameraViewBottomOffset = surfaceViewHeight
             }
 
         faceRelativeLayout.layoutParams = layoutParams

@@ -25,8 +25,8 @@ class CameraTextureView @JvmOverloads constructor(
                     roundY = height / 2
                     //设置裁剪的圆心，半径
                     radius =
-                        if (faceCameraViewRightOffset - faceCameraViewLeftOffset > faceCameraViewDownOffset - faceCameraViewTopOffset) {
-                            (faceCameraViewDownOffset - faceCameraViewTopOffset) / 2
+                        if (faceCameraViewRightOffset - faceCameraViewLeftOffset > faceCameraViewBottomOffset - faceCameraViewTopOffset) {
+                            (faceCameraViewBottomOffset - faceCameraViewTopOffset) / 2
                         } else {
                             (faceCameraViewRightOffset - faceCameraViewLeftOffset) / 2
                         }
