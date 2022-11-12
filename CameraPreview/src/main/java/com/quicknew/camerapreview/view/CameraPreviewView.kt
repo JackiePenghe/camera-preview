@@ -332,7 +332,7 @@ class CameraPreviewView @JvmOverloads constructor(
         frameCallbackHandler.post {
             frameListener?.frameDataLegacy(
                 data,
-                isMultipleCamera = false,
+                isMultipleCamera = true,
                 isRgbData = true,
                 previewWidth,
                 previewHeight
@@ -348,8 +348,8 @@ class CameraPreviewView @JvmOverloads constructor(
         frameCallbackHandler.post {
             frameListener?.frameDataLegacy(
                 data,
-                isMultipleCamera = false,
-                isRgbData = true,
+                isMultipleCamera = true,
+                isRgbData = false,
                 previewWidth,
                 previewHeight
             )

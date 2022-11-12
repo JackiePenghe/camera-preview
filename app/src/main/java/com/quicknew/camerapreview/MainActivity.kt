@@ -27,7 +27,7 @@ class MainActivity : AppCompatActivity() {
             width: Int,
             height: Int
         ) {
-            Log.w(TAG, "frameDataLegacy")
+            Log.w(TAG, "frameDataLegacy isMultipleCamera:$isMultipleCamera isRgbData:$isRgbData")
         }
 
         /**
