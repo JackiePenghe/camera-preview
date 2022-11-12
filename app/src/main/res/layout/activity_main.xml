@@ -16,8 +16,9 @@
             android:id="@+id/camera_preview_view"
             android:layout_width="match_parent"
             android:layout_height="match_parent"
-            app:cameraVersion="camera2"
-            app:needExchangeWidthAndHeight="true"/>
+            app:cameraVersion="auto"
+            app:needExchangeWidthAndHeight="true"
+            app:useMultipleCamera="true" />
 
     </FrameLayout>
 </layout>

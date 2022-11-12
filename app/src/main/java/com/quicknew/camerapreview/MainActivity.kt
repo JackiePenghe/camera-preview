@@ -1,5 +1,6 @@
 package com.quicknew.camerapreview
 
+import android.media.Image
 import android.os.Bundle
 import android.util.Log
 import androidx.appcompat.app.AppCompatActivity
@@ -26,17 +27,17 @@ class MainActivity : AppCompatActivity() {
             width: Int,
             height: Int
         ) {
-            Log.w(TAG, "frameDataLegacy ")
+            Log.w(TAG, "frameDataLegacy")
         }
 
         /**
          * 数据帧回调-camera2
-         * @param data 帧数据
+         * @param imageData 帧数据
          * @param isMultipleCamera 是否双目摄像头
          * @param isRgbData 是否RGB相机数据源
          */
         override fun frameDataCamera2(
-            data: ByteArray,
+            imageData: Array<Image.Plane>,
             isMultipleCamera: Boolean,
             isRgbData: Boolean,
             width: Int,
@@ -44,7 +45,6 @@ class MainActivity : AppCompatActivity() {
         ) {
             Log.w(TAG, "frameDataCamera2")
         }
-
     }
 
     private lateinit var binding: ActivityMainBinding

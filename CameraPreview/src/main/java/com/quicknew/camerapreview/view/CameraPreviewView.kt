@@ -2,11 +2,14 @@ package com.quicknew.camerapreview.view
 
 import android.annotation.SuppressLint
 import android.content.Context
+import android.graphics.ImageFormat
 import android.graphics.SurfaceTexture
 import android.hardware.Camera
 import android.hardware.camera2.*
 import android.hardware.camera2.params.OutputConfiguration
 import android.hardware.camera2.params.SessionConfiguration
+import android.media.Image
+import android.media.ImageReader
 import android.os.Build
 import android.os.Handler
 import android.os.HandlerThread
@@ -15,6 +18,7 @@ import android.view.Surface
 import android.view.TextureView
 import android.view.ViewGroup
 import android.widget.RelativeLayout
+import androidx.annotation.RequiresApi
 import com.quicknew.camerapreview.CameraManagement.cameraEnable
 import com.quicknew.camerapreview.CameraManagement.cameraIdList
 import com.quicknew.camerapreview.CameraManagement.cameraManager
@@ -158,9 +162,28 @@ class CameraPreviewView @JvmOverloads constructor(
     private var camera2Single: CameraDevice? = null
 
     /**
+     * camera2单目相机图片获取实例
+     */
+    private var camera2SingleImageReader: ImageReader? = null
+
+    /**
+     * camera2双目-RGB相机图片获取实例
+     */
+    private var camera2RgbImageReader: ImageReader? = null
+
+    /**
+     * camera2双目-IR相机图片获取实例
+     */
+    private var camera2IrImageReader: ImageReader? = null
+
+    /**
      * camera2预览的Surface
      */
     private var camera2PreviewSurface: Surface? = null
+
+    /**
+     * camera2预览的SurfaceTexture
+     */
     private var camera2PreviewSurfaceTexture: SurfaceTexture? = null
 
     /**
@@ -235,10 +258,8 @@ class CameraPreviewView @JvmOverloads constructor(
             if (camera2PreviewSurface == null) {
                 camera2PreviewSurfaceTexture = surface
                 camera2PreviewSurface = Surface(surface)
-                camera2PreviewSurfaceTexture?.setOnFrameAvailableListener {
-                    warnOut("camera2PreviewSurfaceTexture FrameAvailableListener")
-                }
             }
+
             if (cameraNumbers == 1) {
                 openCamera()
             } else {
@@ -352,17 +373,29 @@ class CameraPreviewView @JvmOverloads constructor(
             val camera2SingleCaptureRequestBuilder =
                 camera2Single?.createCaptureRequest(CameraDevice.TEMPLATE_PREVIEW)
             camera2SingleCaptureRequestBuilder?.addTarget(camera2PreviewSurface)
+            if (camera2SingleImageReader != null) {
+                camera2SingleCaptureRequestBuilder?.addTarget(camera2SingleImageReader!!.surface)
+            }
             camera2SingleCaptureRequest = camera2SingleCaptureRequestBuilder?.build()
             if (!isCamera2FullSupport()) {
                 errorOut("设备不支持完整的Camera2功能，可能无法获取预览图像信息")
             }
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
-                val outputConfiguration = OutputConfiguration(camera2PreviewSurface)
+                val previewOutputConfiguration = OutputConfiguration(camera2PreviewSurface)
                 //如果设置了高速模式并且设备支持，使用高速模式预览
-
+                val camera2SingleImageReaderOutputConfiguration =
+                    if (camera2SingleImageReader != null) {
+                        OutputConfiguration(camera2SingleImageReader!!.surface)
+                    } else {
+                        null
+                    }
                 val sessionConfiguration = SessionConfiguration(
                     SessionConfiguration.SESSION_REGULAR,
-                    listOf(outputConfiguration),
+                    if (camera2SingleImageReaderOutputConfiguration != null)
+                        listOf(
+                            previewOutputConfiguration,
+                            camera2SingleImageReaderOutputConfiguration
+                        ) else listOf(previewOutputConfiguration),
                     camera2Executor,
                     camera2SingleSessionCallback
                 )
@@ -371,7 +404,11 @@ class CameraPreviewView @JvmOverloads constructor(
             } else {
                 @Suppress("DEPRECATION")
                 camera2Single?.createCaptureSession(
-                    listOf(camera2PreviewSurface), camera2SingleSessionCallback, camera2Handler
+                    if (camera2SingleImageReader == null)
+                        listOf(camera2PreviewSurface) else listOf(
+                        camera2PreviewSurface,
+                        camera2SingleImageReader!!.surface
+                    ), camera2SingleSessionCallback, camera2Handler
                 )
             }
         }
@@ -379,6 +416,7 @@ class CameraPreviewView @JvmOverloads constructor(
         override fun onDisconnected(camera: CameraDevice) {
             warnOut("camera2单目相机已断开")
             camera2Single = null
+            camera2SingleImageReader = null
         }
 
         override fun onError(camera: CameraDevice, error: Int) {
@@ -446,21 +484,17 @@ class CameraPreviewView @JvmOverloads constructor(
         ) {
             super.onCaptureProgressed(session, request, partialResult)
             hasProcess = true
+            getCamera2FrameData(camera2SingleImageReader, isMultipleCamera = false, isRgb = true)
         }
 
         override fun onCaptureCompleted(
             session: CameraCaptureSession, request: CaptureRequest, result: TotalCaptureResult
         ) {
             super.onCaptureCompleted(session, request, result)
-            if (!isCamera2FullSupport()) {
-                if (!hasProcess) {
-                    errorOut("camera2 单目相机 没有可处理的数据帧")
-                }
-            } else {
-                if (!hasProcess) {
-                    warnOut("camera2 单目相机 没有可处理的数据帧")
-                }
+            if (hasProcess) {
+                return
             }
+            getCamera2FrameData(camera2SingleImageReader, isMultipleCamera = false, isRgb = true)
         }
     }
 
@@ -605,12 +639,6 @@ class CameraPreviewView @JvmOverloads constructor(
         ) {
             super.onCaptureStarted(session, request, timestamp, frameNumber)
             hasProcess = false
-            //TODO 触发回调
-//            if (useMultipleCamera) {
-//
-//            } else {
-//                camera2PreviewSurface?.
-//            }
         }
 
         override fun onCaptureProgressed(
@@ -620,7 +648,7 @@ class CameraPreviewView @JvmOverloads constructor(
         ) {
             super.onCaptureProgressed(session, request, partialResult)
             hasProcess = true
-            //TODO
+            getCamera2FrameData(camera2RgbImageReader, isMultipleCamera = true, isRgb = true)
         }
 
         override fun onCaptureCompleted(
@@ -629,15 +657,10 @@ class CameraPreviewView @JvmOverloads constructor(
             result: TotalCaptureResult
         ) {
             super.onCaptureCompleted(session, request, result)
-//            if (!isCamera2FullSupport()) {
-//                if (!hasProcess) {
-//                    errorOut("camera2 RGB相机 没有可处理的数据帧")
-//                }
-//            } else {
-//                if (!hasProcess) {
-//                    warnOut("camera2 RGB相机 没有可处理的数据帧")
-//                }
-//            }
+            if (hasProcess) {
+                return
+            }
+            getCamera2FrameData(camera2RgbImageReader, isMultipleCamera = true, isRgb = true)
         }
     }
 
@@ -665,7 +688,7 @@ class CameraPreviewView @JvmOverloads constructor(
         ) {
             super.onCaptureProgressed(session, request, partialResult)
             hasProcess = true
-            //TODO
+            getCamera2FrameData(camera2RgbImageReader, isMultipleCamera = true, isRgb = false)
         }
 
         override fun onCaptureCompleted(
@@ -674,15 +697,10 @@ class CameraPreviewView @JvmOverloads constructor(
             result: TotalCaptureResult
         ) {
             super.onCaptureCompleted(session, request, result)
-//            if (!isCamera2FullSupport()) {
-//                if (!hasProcess) {
-//                    errorOut("camera2 IR相机 没有可处理的数据帧")
-//                }
-//            } else {
-//                if (!hasProcess) {
-//                    warnOut("camera2 IR相机 没有可处理的数据帧")
-//                }
-//            }
+            if (hasProcess) {
+                return
+            }
+            getCamera2FrameData(camera2RgbImageReader, isMultipleCamera = true, isRgb = false)
         }
     }
 
@@ -809,6 +827,7 @@ class CameraPreviewView @JvmOverloads constructor(
     /**
      * 设置相机版本
      */
+    @Suppress("unused")
     fun setCameraVersion(cameraVersion: CameraVersion) {
         this.cameraVersion = cameraVersion.value
     }
@@ -816,6 +835,7 @@ class CameraPreviewView @JvmOverloads constructor(
     /**
      * 设置RGB相机ID
      */
+    @Suppress("unused")
     fun setRgbCameraId(rgbCameraId: Int) {
         this.rgbCameraId = rgbCameraId
     }
@@ -823,6 +843,7 @@ class CameraPreviewView @JvmOverloads constructor(
     /**
      * 设置相机预览分辨率
      */
+    @Suppress("unused")
     fun setPreviewSize(width: Int, height: Int) {
         previewWidth = width
         previewHeight = height
@@ -831,6 +852,7 @@ class CameraPreviewView @JvmOverloads constructor(
     /**
      * 设置相机旋转角度
      */
+    @Suppress("unused")
     fun setCameraRotation(cameraRotation: Int) {
         this.cameraRotation = cameraRotation
     }
@@ -838,6 +860,7 @@ class CameraPreviewView @JvmOverloads constructor(
     /**
      * 获取相机旋转角度
      */
+    @Suppress("unused")
     fun getCameraRotation(): Int {
         return cameraRotation
     }
@@ -845,6 +868,7 @@ class CameraPreviewView @JvmOverloads constructor(
     /**
      * 设置是否使用圆形预览
      */
+    @Suppress("unused")
     fun setEnableRoundPreview(enableRoundPreview: Boolean) {
         this.enableRoundPreview = enableRoundPreview
     }
@@ -852,6 +876,7 @@ class CameraPreviewView @JvmOverloads constructor(
     /**
      * 设置是否交换宽高
      */
+    @Suppress("unused")
     fun setNeedExchangeWidthAndHeight(needExchangeWidthAndHeight: Boolean) {
         this.needExchangeWidthAndHeight = needExchangeWidthAndHeight
     }
@@ -859,6 +884,7 @@ class CameraPreviewView @JvmOverloads constructor(
     /**
      * 设置是否开启镜像
      */
+    @Suppress("unused")
     fun setMirrored(mirrored: Boolean) {
         this.mirrored = mirrored
     }
@@ -866,8 +892,25 @@ class CameraPreviewView @JvmOverloads constructor(
     /**
      * 是否开启镜像
      */
+    @Suppress("unused")
     fun isMirrored(): Boolean {
         return mirrored
+    }
+
+    /**
+     * 设置是否使用双目相机
+     */
+    @Suppress("unused")
+    fun setUseMultipleCamera(useMultipleCamera: Boolean) {
+        this.useMultipleCamera = useMultipleCamera
+    }
+
+    /**
+     * 获取是否使用双目相机
+     */
+    @Suppress("unused")
+    fun isUseMultipleCamera(): Boolean {
+        return useMultipleCamera
     }
 
     /* * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * *
@@ -1214,6 +1257,11 @@ class CameraPreviewView @JvmOverloads constructor(
         camera2Single?.close()
         camera2Rgb?.close()
         camera2IR?.close()
+        camera2Single = null
+        camera2Rgb = null
+        camera2IR = null
+        camera2SingleImageReader?.close()
+        camera2SingleImageReader = null
     }
 
     /**
@@ -1225,6 +1273,10 @@ class CameraPreviewView @JvmOverloads constructor(
         cameraLegacySingle?.stopPreview()
         cameraLegacyRgb?.stopPreview()
         cameraLegacyIR?.stopPreview()
+
+        cameraLegacySingle = null
+        cameraLegacyRgb = null
+        cameraLegacyIR = null
     }
 
     /**
@@ -1236,6 +1288,7 @@ class CameraPreviewView @JvmOverloads constructor(
         if (!isCamera2FullSupport()) {
             errorOut("设备不支持完整的Camera2功能，可能出现未知的异常，可能无法获取预览图像信息")
         }
+        initCamera2SingleImageLoader(cameraId)
         cameraManager.openCamera(cameraId, camera2SingleStateCallback, camera2Handler)
     }
 
@@ -1249,6 +1302,8 @@ class CameraPreviewView @JvmOverloads constructor(
         if (!isCamera2FullSupport()) {
             errorOut("设备不支持完整的Camera2功能，可能出现未知的异常，可能无法获取预览图像信息")
         }
+        initCamera2RgbImageLoader(cameraRgbId)
+        initCamera2IrImageLoader(cameraIrId)
         cameraManager.openCamera(cameraRgbId, camera2RgbStateCallback, camera2Handler)
         cameraManager.openCamera(cameraIrId, camera2IrStateCallback, camera2Handler)
     }
@@ -1313,5 +1368,230 @@ class CameraPreviewView @JvmOverloads constructor(
                 camera2Handler
             )
         }
+    }
+
+    /**
+     * 创建camera2单目相机图片读取实例
+     */
+    private fun initCamera2SingleImageLoader(cameraId: String) {
+        if (camera2SingleImageReader == null) {
+            val cameraCharacteristics = cameraManager.getCameraCharacteristics(cameraId)
+            val availableCapabilities =
+                cameraCharacteristics.get(CameraCharacteristics.SCALER_STREAM_CONFIGURATION_MAP)
+                    ?: return
+            val outputFormats = availableCapabilities.outputFormats
+            if (outputFormats.isEmpty()) {
+                return
+            }
+            val outputFormatList: ArrayList<Int> =
+                ArrayList(outputFormats.toMutableList())
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                initImageLoaderM(outputFormatList, isMultipleCamera = false, isRgb = true)
+            } else {
+                initImageLoader(outputFormatList, isMultipleCamera = false, isRgb = true)
+            }
+        }
+    }
+
+    /**
+     * 创建camera2双目-RGB相机图片读取实例
+     */
+    private fun initCamera2RgbImageLoader(cameraId: String) {
+        if (camera2RgbImageReader == null) {
+            val cameraCharacteristics = cameraManager.getCameraCharacteristics(cameraId)
+            val availableCapabilities =
+                cameraCharacteristics.get(CameraCharacteristics.SCALER_STREAM_CONFIGURATION_MAP)
+                    ?: return
+            val outputFormats = availableCapabilities.outputFormats
+            if (outputFormats.isEmpty()) {
+                return
+            }
+            val outputFormatList: ArrayList<Int> =
+                ArrayList(outputFormats.toMutableList())
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                initImageLoaderM(outputFormatList, isMultipleCamera = true, isRgb = true)
+            } else {
+                initImageLoader(outputFormatList, isMultipleCamera = true, isRgb = true)
+            }
+        }
+    }
+
+    @RequiresApi(Build.VERSION_CODES.M)
+    private fun initImageLoaderM(
+        outputFormatList: java.util.ArrayList<Int>,
+        isMultipleCamera: Boolean,
+        isRgb: Boolean
+    ) {
+        if (outputFormatList.contains(ImageFormat.FLEX_RGB_888)) {
+            if (isMultipleCamera) {
+                if (isRgb) {
+                    camera2RgbImageReader =
+                        ImageReader.newInstance(
+                            previewWidth,
+                            previewHeight,
+                            ImageFormat.FLEX_RGB_888,
+                            2
+                        )
+                } else {
+                    camera2IrImageReader =
+                        ImageReader.newInstance(
+                            previewWidth,
+                            previewHeight,
+                            ImageFormat.FLEX_RGB_888,
+                            2
+                        )
+                }
+            } else {
+                camera2SingleImageReader = ImageReader.newInstance(
+                    previewWidth,
+                    previewHeight,
+                    ImageFormat.FLEX_RGB_888,
+                    2
+                )
+            }
+        } else if (outputFormatList.contains(ImageFormat.YUV_420_888)) {
+            initImageLoader(outputFormatList, isMultipleCamera, isRgb)
+        } else {
+            errorOut("相机不支持使用 ImageFormat.FLEX_RGB_888 或 ImageFormat.YUV_420_888 无法进行人脸识别")
+        }
+    }
+
+    private fun initImageLoader(
+        outputFormatList: java.util.ArrayList<Int>,
+        isMultipleCamera: Boolean,
+        isRgb: Boolean
+    ) {
+        if (outputFormatList.contains(ImageFormat.YUV_420_888)) {
+            if (isMultipleCamera) {
+                if (isRgb) {
+                    camera2RgbImageReader =
+                        ImageReader.newInstance(
+                            previewWidth,
+                            previewHeight,
+                            ImageFormat.YUV_420_888,
+                            2
+                        )
+                } else {
+                    camera2IrImageReader =
+                        ImageReader.newInstance(
+                            previewWidth,
+                            previewHeight,
+                            ImageFormat.YUV_420_888,
+                            2
+                        )
+                }
+            } else {
+                camera2SingleImageReader =
+                    ImageReader.newInstance(
+                        previewWidth,
+                        previewHeight,
+                        ImageFormat.YUV_420_888,
+                        2
+                    )
+            }
+        } else {
+            errorOut("相机不支持使用 ImageFormat.YUV_420_888 无法进行人脸识别")
+        }
+    }
+
+    /**
+     * 创建camera2单目相机图片读取实例
+     */
+    private fun initCamera2IrImageLoader(cameraId: String) {
+        if (camera2IrImageReader == null) {
+            val cameraCharacteristics = cameraManager.getCameraCharacteristics(cameraId)
+            val availableCapabilities =
+                cameraCharacteristics.get(CameraCharacteristics.SCALER_STREAM_CONFIGURATION_MAP)
+                    ?: return
+            val outputFormats = availableCapabilities.outputFormats
+            if (outputFormats.isEmpty()) {
+                return
+            }
+            val outputFormatList: ArrayList<Int> =
+                ArrayList(outputFormats.toMutableList())
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                initImageLoaderM(outputFormatList, isMultipleCamera = true, isRgb = false)
+            } else {
+                initImageLoader(outputFormatList, isMultipleCamera = true, isRgb = false)
+            }
+        }
+    }
+
+    /**
+     * 获取Camera2帧数据，并触发回调
+     */
+    private fun getCamera2FrameData(
+        imageReader: ImageReader?,
+        isMultipleCamera: Boolean,
+        isRgb: Boolean
+    ) {
+        imageReader ?: return
+        val acquireLatestImage = imageReader.acquireLatestImage()
+        val planes: Array<Image.Plane>
+        if (!isCamera2FullSupport()) {
+            if (acquireLatestImage == null) {
+                if (!isMultipleCamera) {
+                    errorOut("camera2 单目相机 处理数据帧为空")
+                } else {
+                    if (isRgb) {
+                        errorOut("camera2 双目-RGB相机 处理数据帧为空")
+                    } else {
+                        errorOut("camera2 双目-IR相机 处理数据帧为空")
+                    }
+                }
+                return
+            }
+            val planesCache = acquireLatestImage.planes
+            if (planesCache == null || planesCache.isEmpty()) {
+                if (!isMultipleCamera) {
+                    errorOut("camera2 单目相机 planes数据为空")
+                } else {
+                    if (isRgb) {
+                        errorOut("camera2 双目-RGB相机 planes数据为空")
+                    } else {
+                        errorOut("camera2 双目-IR相机 planes数据为空")
+                    }
+                }
+                acquireLatestImage.close()
+                return
+            }
+            planes = planesCache
+        } else {
+            if (acquireLatestImage == null) {
+                if (!isMultipleCamera) {
+                    warnOut("camera2 单目相机 处理数据帧为空")
+                } else {
+                    if (isRgb) {
+                        warnOut("camera2 双目-RGB相机 处理数据帧为空")
+                    } else {
+                        warnOut("camera2 双目-IR相机 处理数据帧为空")
+                    }
+                }
+                return
+            }
+            val planesCache = acquireLatestImage.planes
+            if (planesCache == null || planesCache.isEmpty()) {
+                if (!isMultipleCamera) {
+                    warnOut("camera2 单目相机 planes数据为空")
+                } else {
+                    if (isRgb) {
+                        warnOut("camera2 双目-RGB相机 planes数据为空")
+                    } else {
+                        warnOut("camera2 双目-IR相机 planes数据为空")
+                    }
+                }
+                acquireLatestImage.close()
+                return
+            }
+            planes = planesCache
+        }
+        frameListener?.frameDataCamera2(
+            planes,
+            isMultipleCamera = isMultipleCamera,
+            isRgbData = isRgb,
+            width = acquireLatestImage.width,
+            height = acquireLatestImage.height
+        )
+        acquireLatestImage.close()
     }
 }
