@@ -19,7 +19,7 @@
         <!--    相机旋转角度（0，90，180，270）    -->
         <attr name="cameraRotation" format="integer" />
         <!--    是否使用圆形预览    -->
-        <attr name="enableRoundPreview" format="boolean" />
+        <attr name="enableCirclePreview" format="boolean" />
         <!--    是否交换宽高比    -->
         <attr name="needExchangeWidthAndHeight" format="boolean" />
         <!--    是否镜像展示画面内容    -->

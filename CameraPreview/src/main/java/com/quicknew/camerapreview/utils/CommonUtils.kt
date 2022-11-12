@@ -39,6 +39,26 @@ internal var faceCameraViewTopOffset = 0
 internal var faceCameraViewDownOffset = 0
 
 /**
+ * 是否使用圆形预览
+ */
+internal var enableCirclePreview: Boolean = false
+
+/**
+ * 圆形预览时，圆心的X坐标
+ */
+internal var roundX: Int = 0
+
+/**
+ * 圆形预览时，圆心的Y坐标
+ */
+internal var roundY: Int = 0
+
+/**
+ * 圆形预览时，半径的大小
+ */
+internal var radius: Int = 0
+
+/**
  * 使用Log.w打印信息
  */
 internal fun Any.warnOut(msg: String) {

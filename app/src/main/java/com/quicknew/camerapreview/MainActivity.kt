@@ -1,17 +1,15 @@
 package com.quicknew.camerapreview
 
+import android.graphics.Rect
 import android.media.Image
 import android.os.Bundle
-import android.util.Log
+import android.os.Handler
+import android.os.Looper
 import androidx.appcompat.app.AppCompatActivity
 import com.quicknew.camerapreview.databinding.ActivityMainBinding
 import com.quicknew.camerapreview.interfaces.FrameListener
 
 class MainActivity : AppCompatActivity() {
-
-    companion object {
-        private val TAG: String = MainActivity::class.java.simpleName ?: "MainActivity"
-    }
 
     private val frameListener = object : FrameListener {
         /**
@@ -27,7 +25,7 @@ class MainActivity : AppCompatActivity() {
             width: Int,
             height: Int
         ) {
-            Log.w(TAG, "frameDataLegacy isMultipleCamera:$isMultipleCamera isRgbData:$isRgbData")
+//            Log.w(TAG, "frameDataLegacy isMultipleCamera:$isMultipleCamera isRgbData:$isRgbData")
         }
 
         /**
@@ -43,7 +41,7 @@ class MainActivity : AppCompatActivity() {
             width: Int,
             height: Int
         ) {
-            Log.w(TAG, "frameDataCamera2")
+//            Log.w(TAG, "frameDataCamera2")
         }
     }
 
@@ -55,6 +53,9 @@ class MainActivity : AppCompatActivity() {
         setContentView(binding.root)
 
         binding.cameraPreviewView.setFrameListener(frameListener)
+        Handler(Looper.getMainLooper()).postDelayed({
+            binding.cameraPreviewView.isCoordinatesOutScreen(Rect())
+        }, 2000)
     }
 
 

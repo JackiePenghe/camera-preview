@@ -16,8 +16,11 @@
             android:id="@+id/camera_preview_view"
             android:layout_width="match_parent"
             android:layout_height="match_parent"
+            app:cameraMirror="true"
             app:cameraVersion="auto"
-            app:needExchangeWidthAndHeight="true"
+            app:needExchangeWidthAndHeight="false"
+            app:enableCirclePreview="false"
+            app:rgbCameraId="1"
             app:useMultipleCamera="true" />
 
     </FrameLayout>

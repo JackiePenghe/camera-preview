@@ -3,6 +3,7 @@ package com.quicknew.camerapreview.view
 import android.annotation.SuppressLint
 import android.content.Context
 import android.graphics.ImageFormat
+import android.graphics.Rect
 import android.graphics.SurfaceTexture
 import android.hardware.Camera
 import android.hardware.camera2.*
@@ -14,9 +15,7 @@ import android.os.Build
 import android.os.Handler
 import android.os.HandlerThread
 import android.util.AttributeSet
-import android.view.Surface
-import android.view.TextureView
-import android.view.ViewGroup
+import android.view.*
 import android.widget.RelativeLayout
 import androidx.annotation.RequiresApi
 import com.quicknew.camerapreview.CameraManagement.cameraEnable
@@ -30,6 +29,7 @@ import com.quicknew.camerapreview.interfaces.FrameListener
 import com.quicknew.camerapreview.utils.*
 import java.util.concurrent.Executor
 import java.util.concurrent.ScheduledThreadPoolExecutor
+import kotlin.math.sqrt
 
 
 class CameraPreviewView @JvmOverloads constructor(
@@ -110,11 +110,6 @@ class CameraPreviewView @JvmOverloads constructor(
      * 相机旋转角度 （0，90，180，270）
      */
     private var cameraRotation: Int = 0
-
-    /**
-     * 是否使用圆形预览
-     */
-    private var enableRoundPreview: Boolean = false
 
     /**
      * 是否交换宽高比
@@ -222,7 +217,6 @@ class CameraPreviewView @JvmOverloads constructor(
     private var frameListener: FrameListener? = null
 
     /* * * * * * * * * * * * * * * * * * * 可变属性 * * * * * * * * * * * * * * * * * * */
-
 
     /* * * * * * * * * * * * * * * * * * * 延时初始化属性 * * * * * * * * * * * * * * * * * * */
 
@@ -822,6 +816,78 @@ class CameraPreviewView @JvmOverloads constructor(
         this.frameListener = frameListener
     }
 
+    /**
+     * 判断坐标是否超出屏幕区域
+     */
+    fun isCoordinatesOutScreen(rect: Rect): Boolean {
+        if (needExchangeWidthAndHeight) {
+            rect.left = (rect.left * proportion(faceCameraViewWidth, previewWidth)).toInt()
+            rect.right = (rect.right * proportion(
+                faceCameraViewWidth,
+                previewWidth
+            )).toInt()
+            rect.top = (rect.top * proportion(
+                faceCameraViewHeight,
+                previewHeight
+            )).toInt()
+            rect.bottom = (rect.bottom * proportion(
+                faceCameraViewHeight,
+                previewHeight
+            )).toInt()
+        } else {
+            rect.left = (rect.left * proportion(
+                faceCameraViewWidth,
+                previewHeight
+            )).toInt()
+            rect.right = (rect.right * proportion(
+                faceCameraViewWidth,
+                previewHeight
+            )).toInt()
+            rect.top = (rect.top * proportion(
+                faceCameraViewHeight,
+                previewWidth
+            )).toInt()
+            rect.bottom = (rect.bottom * proportion(
+                faceCameraViewHeight,
+                previewWidth
+            )).toInt()
+        }
+
+        //判断是否为圆形
+        return if (enableCirclePreview) {
+            (isOutCircle(
+                rect.left,
+                rect.top,
+                roundX,
+                roundY,
+                radius
+            )
+                    || isOutCircle(
+                rect.left,
+                rect.bottom,
+                roundX,
+                roundY,
+                radius
+            )
+                    || isOutCircle(
+                rect.right,
+                rect.top,
+                roundX,
+                roundY,
+                radius
+            )
+                    || isOutCircle(
+                rect.right,
+                rect.bottom,
+                roundX,
+                roundY,
+                radius
+            ))
+        } else {
+            rect.left < faceCameraViewLeftOffset || rect.right > faceCameraViewRightOffset || rect.top < faceCameraViewTopOffset || rect.bottom > faceCameraViewDownOffset
+        }
+    }
+
     /* * * * * * * * * * * * * * * * * * * 自定义属性相关方法 * * * * * * * * * * * * * * * * * * */
 
     /**
@@ -869,8 +935,8 @@ class CameraPreviewView @JvmOverloads constructor(
      * 设置是否使用圆形预览
      */
     @Suppress("unused")
-    fun setEnableRoundPreview(enableRoundPreview: Boolean) {
-        this.enableRoundPreview = enableRoundPreview
+    fun setEnableRoundPreview(enableCirclePreview: Boolean) {
+        com.quicknew.camerapreview.utils.enableCirclePreview = enableCirclePreview
     }
 
     /**
@@ -943,10 +1009,10 @@ class CameraPreviewView @JvmOverloads constructor(
         cameraRotation =
             obtainStyledAttributes.getInt(R.styleable.CameraPreviewView_cameraRotation, 0)
         warnOut("相机旋转角度 $cameraRotation")
-        enableRoundPreview = obtainStyledAttributes.getBoolean(
-            R.styleable.CameraPreviewView_enableRoundPreview, false
+        enableCirclePreview = obtainStyledAttributes.getBoolean(
+            R.styleable.CameraPreviewView_enableCirclePreview, false
         )
-        warnOut("相机是否使用圆形预览 $enableRoundPreview")
+        warnOut("相机是否使用圆形预览 $enableCirclePreview")
         needExchangeWidthAndHeight = obtainStyledAttributes.getBoolean(
             R.styleable.CameraPreviewView_needExchangeWidthAndHeight, false
         )
@@ -1129,7 +1195,7 @@ class CameraPreviewView @JvmOverloads constructor(
     private fun calculateProportion() {
         val surfaceViewWidth: Int
         val surfaceViewHeight: Int
-        if (enableRoundPreview) {
+        if (enableCirclePreview) {
             if (width < height) {
                 surfaceViewWidth = width
                 surfaceViewHeight = width
@@ -1146,7 +1212,7 @@ class CameraPreviewView @JvmOverloads constructor(
         val cameraHeight: Int
         val layoutParams = faceRelativeLayout.layoutParams as LayoutParams
         //判断相机方向需要改变更改宽和高
-        if (needExchangeWidthAndHeight) {
+        if (!needExchangeWidthAndHeight) {
             cameraWidth = previewWidth
             cameraHeight = previewHeight
         } else {
@@ -1232,21 +1298,12 @@ class CameraPreviewView @JvmOverloads constructor(
 
         previewTextureView = CameraTextureView(context)
         faceRelativeLayout.addView(previewTextureView)
+
         if (mirrored) {
             previewTextureView.scaleX = -1f
         } else {
             previewTextureView.scaleX = 1f
         }
-        val layoutParamsPreview = previewTextureView.layoutParams
-        layoutParamsPreview.width = ViewGroup.LayoutParams.MATCH_PARENT
-        layoutParamsPreview.height = ViewGroup.LayoutParams.MATCH_PARENT
-        previewTextureView.layoutParams = layoutParamsPreview
-
-        val layoutParamsIr = irTextureView.layoutParams
-        layoutParamsIr.width = ViewGroup.LayoutParams.MATCH_PARENT
-        layoutParamsIr.height = ViewGroup.LayoutParams.MATCH_PARENT
-        irTextureView.layoutParams = layoutParamsIr
-        previewTextureView.requestLayout()
     }
 
     /**
@@ -1593,5 +1650,19 @@ class CameraPreviewView @JvmOverloads constructor(
             height = acquireLatestImage.height
         )
         acquireLatestImage.close()
+    }
+
+    /**
+     * 判断两点之间距离是否大于半径
+     *
+     * @param x1
+     * @param y1
+     * @param x2
+     * @param y2
+     * @param radius
+     * @return
+     */
+    private fun isOutCircle(x1: Int, y1: Int, x2: Int, y2: Int, radius: Int): Boolean {
+        return sqrt(((x1 - x2) * (x1 - x2) + (y1 - y2) * (y1 - y2)).toDouble()) > radius
     }
 }
