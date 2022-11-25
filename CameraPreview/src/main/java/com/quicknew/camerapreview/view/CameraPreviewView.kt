@@ -1,23 +1,30 @@
+@file:Suppress("unused", "DEPRECATION")
+
 package com.quicknew.camerapreview.view
 
 import android.annotation.SuppressLint
 import android.content.Context
-import android.graphics.ImageFormat
-import android.graphics.Rect
-import android.graphics.SurfaceTexture
+import android.graphics.*
 import android.hardware.Camera
 import android.hardware.camera2.*
 import android.hardware.camera2.params.OutputConfiguration
 import android.hardware.camera2.params.SessionConfiguration
-import android.media.Image
 import android.media.ImageReader
 import android.os.Build
 import android.os.Handler
 import android.os.HandlerThread
 import android.util.AttributeSet
+import android.util.Size
 import android.view.*
 import android.widget.RelativeLayout
-import androidx.annotation.RequiresApi
+import androidx.camera.core.CameraSelector
+import androidx.camera.core.ImageAnalysis
+import androidx.camera.core.Preview
+import androidx.camera.lifecycle.ProcessCameraProvider
+import androidx.camera.view.PreviewView
+import androidx.core.content.ContextCompat
+import androidx.lifecycle.LifecycleOwner
+import com.google.common.util.concurrent.ListenableFuture
 import com.quicknew.camerapreview.CameraManagement.cameraEnable
 import com.quicknew.camerapreview.CameraManagement.cameraIdList
 import com.quicknew.camerapreview.CameraManagement.cameraManager
@@ -27,6 +34,10 @@ import com.quicknew.camerapreview.CameraManagement.threadFactory
 import com.quicknew.camerapreview.R
 import com.quicknew.camerapreview.interfaces.FrameListener
 import com.quicknew.camerapreview.utils.*
+import com.quicknew.camerapreview.utils.errorOut
+import com.quicknew.camerapreview.utils.faceCameraViewHeight
+import com.quicknew.camerapreview.utils.faceCameraViewWidth
+import com.quicknew.camerapreview.utils.warnOut
 import java.util.concurrent.Executor
 import java.util.concurrent.ScheduledThreadPoolExecutor
 import kotlin.math.sqrt
@@ -52,11 +63,6 @@ class CameraPreviewView @JvmOverloads constructor(
 
         enum class CameraVersion(val value: Int) {
             /**
-             * 自动选择
-             */
-            AUTO(0),
-
-            /**
              * 旧版相机[android.hardware.Camera]
              */
             LEGACY(1),
@@ -64,7 +70,34 @@ class CameraPreviewView @JvmOverloads constructor(
             /**
              * 新版相机[android.hardware.camera2.CameraDevice]
              */
-            CAMERA2(2)
+            CAMERA2(2),
+
+            /**
+             * 相机x库
+             */
+            CAMERA_X(3)
+        }
+
+        enum class CameraRotation(val value: Int) {
+            /**
+             * 不旋转
+             */
+            CAMERA_ROTATION_DEFAULT(0),
+
+            /**
+             * 旋转90度
+             */
+            CAMERA_ROTATION_90(90),
+
+            /**
+             * 旋转180度
+             */
+            CAMERA_ROTATION_180(180),
+
+            /**
+             * 旋转270度
+             */
+            CAMERA_ROTATION_270(270),
         }
 
         /**
@@ -76,6 +109,13 @@ class CameraPreviewView @JvmOverloads constructor(
          * 默认的相机预览大小-高度
          */
         private const val DEFAULT_PREVIEW_HEIGHT = 480
+
+        /* * * * * * * * * * * * * * * * * * * 常量属性 * * * * * * * * * * * * * * * * * * */
+
+        /**
+         * 没有可处理的帧数据
+         */
+        const val ERR_NO_DATA_HANDLE = 1
     }
 
     /* * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * *
@@ -94,7 +134,7 @@ class CameraPreviewView @JvmOverloads constructor(
     /**
      * 相机版本，使用camera还是使用camera2
      */
-    private var cameraVersion = CameraVersion.AUTO.value
+    private var cameraVersion = CameraVersion.LEGACY.value
 
     /**
      * 相机预览分辨率宽度
@@ -109,7 +149,7 @@ class CameraPreviewView @JvmOverloads constructor(
     /**
      * 相机旋转角度 （0，90，180，270）
      */
-    private var cameraRotation: Int = 0
+    private var cameraRotation = CameraRotation.CAMERA_ROTATION_DEFAULT.value
 
     /**
      * 是否交换宽高比
@@ -126,24 +166,31 @@ class CameraPreviewView @JvmOverloads constructor(
      */
     private var useMultipleCamera: Boolean = true
 
+    /**
+     * camera2 RGB相机旋转角度
+     */
+    private var camera2RgbRotation: Int = cameraRotation
+
+    /**
+     * camera2 IR相机旋转角度
+     */
+    private var camera2IrRotation: Int = cameraRotation
+
     /* * * * * * * * * * * * * * * * * * * 可空属性 * * * * * * * * * * * * * * * * * * */
 
     /**
      * 旧版相机实例
      */
-    @Suppress("DEPRECATION")
     private var cameraLegacySingle: Camera? = null
 
     /**
      * 旧版RGB相机实例
      */
-    @Suppress("DEPRECATION")
     private var cameraLegacyRgb: Camera? = null
 
     /**
      * 旧版黑白相机实例
      */
-    @Suppress("DEPRECATION")
     private var cameraLegacyIR: Camera? = null
 
     /**
@@ -216,7 +263,15 @@ class CameraPreviewView @JvmOverloads constructor(
      */
     private var frameListener: FrameListener? = null
 
-    /* * * * * * * * * * * * * * * * * * * 可变属性 * * * * * * * * * * * * * * * * * * */
+    /**
+     * cameraX相机Provider
+     */
+    private var cameraXProviderFuture: ListenableFuture<ProcessCameraProvider>? = null
+
+    /**
+     * cameraX单目相机实例
+     */
+    private var cameraXSingleCamera: androidx.camera.core.Camera? = null
 
     /* * * * * * * * * * * * * * * * * * * 延时初始化属性 * * * * * * * * * * * * * * * * * * */
 
@@ -234,6 +289,11 @@ class CameraPreviewView @JvmOverloads constructor(
      * ir画面的View
      */
     private lateinit var irTextureView: CameraTextureView
+
+    /**
+     * camerax预览View
+     */
+    private lateinit var cameraXRgbPreviewView: PreviewView
 
     /* * * * * * * * * * * * * * * * * * * 常量属性 * * * * * * * * * * * * * * * * * * */
 
@@ -305,8 +365,8 @@ class CameraPreviewView @JvmOverloads constructor(
     /**
      * 旧版相机的单目相机预览数据回调
      */
-    @Suppress("DEPRECATION")
     private val cameraLegacySinglePreviewCallback = Camera.PreviewCallback { data, camera ->
+        cameraLegacySingle = camera
         frameCallbackHandler.post {
             frameListener?.frameDataLegacy(
                 data,
@@ -321,9 +381,9 @@ class CameraPreviewView @JvmOverloads constructor(
     /**
      * 旧版相机的双目RGB相机预览相关回调
      */
-    @Suppress("DEPRECATION")
     private val cameraLegacyRgbPreviewCallback = Camera.PreviewCallback { data, camera ->
         frameCallbackHandler.post {
+            cameraLegacyRgb = camera
             frameListener?.frameDataLegacy(
                 data,
                 isMultipleCamera = true,
@@ -337,8 +397,7 @@ class CameraPreviewView @JvmOverloads constructor(
     /**
      * 旧版相机的双目IR相机预览相关回调
      */
-    @Suppress("DEPRECATION")
-    private val cameraLegacyIRPreviewCallback = Camera.PreviewCallback { data, camera ->
+    private val cameraLegacyIRPreviewCallback = Camera.PreviewCallback { data, _ ->
         frameCallbackHandler.post {
             frameListener?.frameDataLegacy(
                 data,
@@ -396,7 +455,6 @@ class CameraPreviewView @JvmOverloads constructor(
 
                 camera2Single?.createCaptureSession(sessionConfiguration)
             } else {
-                @Suppress("DEPRECATION")
                 camera2Single?.createCaptureSession(
                     if (camera2SingleImageReader == null)
                         listOf(camera2PreviewSurface) else listOf(
@@ -682,7 +740,7 @@ class CameraPreviewView @JvmOverloads constructor(
         ) {
             super.onCaptureProgressed(session, request, partialResult)
             hasProcess = true
-            getCamera2FrameData(camera2RgbImageReader, isMultipleCamera = true, isRgb = false)
+            getCamera2FrameData(camera2IrImageReader, isMultipleCamera = true, isRgb = false)
         }
 
         override fun onCaptureCompleted(
@@ -694,7 +752,7 @@ class CameraPreviewView @JvmOverloads constructor(
             if (hasProcess) {
                 return
             }
-            getCamera2FrameData(camera2RgbImageReader, isMultipleCamera = true, isRgb = false)
+            getCamera2FrameData(camera2IrImageReader, isMultipleCamera = true, isRgb = false)
         }
     }
 
@@ -744,9 +802,29 @@ class CameraPreviewView @JvmOverloads constructor(
 
     /* * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * *
      *
+     * 库内方法
+     *
+     * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * */
+
+    /**
+     * 停止CameraX预览
+     */
+    private fun stopCameraXPreview() {
+        cameraXProviderFuture?.get()?.unbindAll()
+    }
+
+    /* * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * *
+     *
      * 公开方法
      *
      * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * */
+
+    /**
+     * 设置数据帧回调
+     */
+    fun setFrameListener(frameListener: FrameListener?) {
+        this.frameListener = frameListener
+    }
 
     /**
      * 开启相机预览
@@ -792,35 +870,24 @@ class CameraPreviewView @JvmOverloads constructor(
             warnOut("设备没有相机，中止预览")
             return
         }
-        if (cameraVersion == CameraVersion.AUTO.value) {
-            if (isCamera2FullSupport()) {
-                //达到Camera2基本要求，使用Camera2
-                warnOut("自动版本：使用Camera2")
-                stopCamera2Preview()
-            } else {
-                //未达到Camera2基本要求，使用旧版相机
-                warnOut("自动版本：使用旧版")
+        when (cameraVersion) {
+            CameraVersion.LEGACY.value -> {
                 stopLegacyPreview()
             }
-        } else if (cameraVersion == CameraVersion.LEGACY.value) {
-            stopLegacyPreview()
-        } else if (cameraVersion == CameraVersion.CAMERA2.value) {
-            stopCamera2Preview()
+            CameraVersion.CAMERA2.value -> {
+                stopCamera2Preview()
+            }
+            CameraVersion.CAMERA_X.value -> {
+                stopCameraXPreview()
+            }
         }
     }
 
     /**
-     * 设置数据帧回调
+     * 计算人脸绘制Rect坐标
      */
-    fun setFrameListener(frameListener: FrameListener?) {
-        this.frameListener = frameListener
-    }
-
-    /**
-     * 判断坐标是否超出屏幕区域
-     */
-    @Suppress("unused")
-    fun isCoordinatesOutScreen(rect: Rect): Boolean {
+    @Suppress("MemberVisibilityCanBePrivate")
+    fun calculateFaceRect(rect: Rect): Rect {
         val cameraWidth: Int
         val cameraHeight: Int
         if (!needExchangeWidthAndHeight) {
@@ -843,41 +910,48 @@ class CameraPreviewView @JvmOverloads constructor(
             faceCameraViewHeight,
             cameraHeight
         )).toInt()
+        return Rect(leftCoordinate, topCoordinate, rightCoordinate, bottomCoordinate)
+    }
+
+    /**
+     * 判断坐标是否超出屏幕区域
+     */
+    @Suppress("unused", "MemberVisibilityCanBePrivate")
+    fun isCoordinatesOutScreen(rect: Rect): Boolean {
+        val calculateFaceRect = calculateFaceRect(rect)
 
         //判断是否为圆形
         return if (enableCirclePreview) {
             (isOutCircle(
-                leftCoordinate,
-                topCoordinate,
+                calculateFaceRect.left,
+                calculateFaceRect.top,
                 roundX,
                 roundY,
                 radius
             )
                     || isOutCircle(
-                leftCoordinate,
-                bottomCoordinate,
+                calculateFaceRect.left,
+                calculateFaceRect.bottom,
                 roundX,
                 roundY,
                 radius
             )
                     || isOutCircle(
-                rightCoordinate,
-                topCoordinate,
+                calculateFaceRect.right,
+                calculateFaceRect.top,
                 roundX,
                 roundY,
                 radius
             )
                     || isOutCircle(
-                rightCoordinate,
-                bottomCoordinate,
+                calculateFaceRect.right,
+                calculateFaceRect.bottom,
                 roundX,
                 roundY,
                 radius
             ))
         } else {
-            warnOut("预览图像区域：$faceCameraViewLeftOffset $faceCameraViewTopOffset $faceCameraViewRightOffset $faceCameraViewBottomOffset")
-            warnOut("坐标计算值：$leftCoordinate $topCoordinate $rightCoordinate $bottomCoordinate")
-            leftCoordinate < faceCameraViewLeftOffset || rightCoordinate > faceCameraViewRightOffset || topCoordinate < faceCameraViewTopOffset || bottomCoordinate > faceCameraViewBottomOffset
+            calculateFaceRect.left < faceCameraViewLeftOffset || calculateFaceRect.right > faceCameraViewRightOffset || calculateFaceRect.top < faceCameraViewTopOffset || calculateFaceRect.bottom > faceCameraViewBottomOffset
         }
     }
 
@@ -912,16 +986,8 @@ class CameraPreviewView @JvmOverloads constructor(
      * 设置相机旋转角度
      */
     @Suppress("unused")
-    fun setCameraRotation(cameraRotation: Int) {
-        this.cameraRotation = cameraRotation
-    }
-
-    /**
-     * 获取相机旋转角度
-     */
-    @Suppress("unused")
-    fun getCameraRotation(): Int {
-        return cameraRotation
+    fun setCameraRotation(cameraRotation: CameraRotation) {
+        this.cameraRotation = cameraRotation.value
     }
 
     /**
@@ -987,7 +1053,7 @@ class CameraPreviewView @JvmOverloads constructor(
         val obtainStyledAttributes =
             context.obtainStyledAttributes(attrs, R.styleable.CameraPreviewView)
         cameraVersion = obtainStyledAttributes.getInt(
-            R.styleable.CameraPreviewView_cameraVersion, CameraVersion.AUTO.value
+            R.styleable.CameraPreviewView_cameraVersion, CameraVersion.LEGACY.value
         )
         warnOut("相机适配版本 ${getCameraVersion(cameraVersion)}")
         rgbCameraId = obtainStyledAttributes.getInt(R.styleable.CameraPreviewView_rgbCameraId, 0)
@@ -1015,7 +1081,15 @@ class CameraPreviewView @JvmOverloads constructor(
         warnOut("是否镜像展示画面 $mirrored")
         useMultipleCamera =
             obtainStyledAttributes.getBoolean(R.styleable.CameraPreviewView_useMultipleCamera, true)
-        warnOut("是否启用双目摄像头 $useMultipleCamera")
+
+        camera2RgbRotation = obtainStyledAttributes.getInt(
+            R.styleable.CameraPreviewView_camera2RgbRotation,
+            cameraRotation
+        )
+        camera2IrRotation = obtainStyledAttributes.getInt(
+            R.styleable.CameraPreviewView_camera2IrRotation,
+            cameraRotation
+        )
         obtainStyledAttributes.recycle()
     }
 
@@ -1065,7 +1139,6 @@ class CameraPreviewView @JvmOverloads constructor(
         if (camera2Handler == null) {
             camera2HandlerThread.start()
             camera2Handler = Handler(camera2HandlerThread.looper)
-            previewTextureView.surfaceTexture?.setDefaultBufferSize(previewWidth, previewHeight)
         }
         if (useMultipleCamera) {
             if (cameraNumbers == 1) {
@@ -1098,7 +1171,6 @@ class CameraPreviewView @JvmOverloads constructor(
     /**
      * 开启双目摄像头(旧版)
      */
-    @Suppress("DEPRECATION")
     private fun openLegacyMultiCamera() {
         cameraLegacyRgb = Camera.open(rgbCameraId)
         val parametersRgb = cameraLegacyRgb?.parameters
@@ -1130,8 +1202,8 @@ class CameraPreviewView @JvmOverloads constructor(
             cameraLegacyIR?.setPreviewCallback(cameraLegacyIRPreviewCallback)
             cameraLegacyIR?.startPreview()
         } catch (e: Exception) {
-            cameraLegacyRgb?.stopPreview()
-            cameraLegacyIR?.stopPreview()
+            //停止相机预览
+            stopPreview()
             //无法同时打开双目，使用单目模式打开
             openLegacySingleCamera()
         }
@@ -1140,9 +1212,12 @@ class CameraPreviewView @JvmOverloads constructor(
     /**
      * 开启单目摄像头(旧版)
      */
-    @Suppress("DEPRECATION")
     private fun openLegacySingleCamera() {
-        cameraLegacySingle = Camera.open()
+        cameraLegacySingle = if (rgbCameraId >= cameraNumbers - 1) {
+            Camera.open()
+        } else {
+            Camera.open(rgbCameraId)
+        }
         val parameters = cameraLegacySingle?.parameters
         val supportedPreviewSizes = parameters?.supportedPreviewSizes
         for (supportedPreviewSize in supportedPreviewSizes ?: listOf()) {
@@ -1162,23 +1237,132 @@ class CameraPreviewView @JvmOverloads constructor(
      * 打开相机
      */
     private fun openCamera() {
-        if (cameraVersion == CameraVersion.AUTO.value) {
-            if (isCamera2FullSupport()) {
-                //达到Camera2基本要求，使用Camera2
-                warnOut("自动版本：达到Camera2基本要求，使用Camera2")
-                openCamera2()
-            } else {
-                //未达到Camera2基本要求，使用旧版相机
-                warnOut("自动版本：未达到Camera2基本要求，使用旧版相机")
+        when (cameraVersion) {
+            CameraVersion.LEGACY.value -> {
                 openLegacy()
             }
-        } else if (cameraVersion == CameraVersion.LEGACY.value) {
-            openLegacy()
-        } else if (cameraVersion == CameraVersion.CAMERA2.value) {
-            if (!isCamera2FullSupport()) {
-                errorOut("设备不支持完整的Camera2功能，可能出现未知的异常，可能无法获取预览图像信息")
+            CameraVersion.CAMERA2.value -> {
+                if (!isCamera2FullSupport()) {
+                    errorOut("设备不支持完整的Camera2功能，可能出现未知的异常，可能无法获取预览图像信息")
+                }
+                openCamera2()
             }
-            openCamera2()
+            CameraVersion.CAMERA_X.value -> {
+                openCameraX()
+            }
+        }
+    }
+
+    /**
+     * 打开相机X
+     */
+    private fun openCameraX() {
+        if (cameraNumbers >= 2 && useMultipleCamera) {
+            openCameraXMulti()
+        } else {
+            openCameraXSingle()
+        }
+    }
+
+    /**
+     * 使用cameraX打开双目相机
+     */
+    private fun openCameraXMulti() {
+        warnOut("cameraX 不支持同时开启多个摄像头，使用单目方式打开")
+        openCameraXSingle()
+    }
+
+    /**
+     * 使用cameraX打开单目相机
+     */
+    private fun openCameraXSingle() {
+        if (cameraXProviderFuture == null) {
+            cameraXProviderFuture = ProcessCameraProvider.getInstance(context)
+        }
+        cameraXProviderFuture?.addListener({
+            cameraXRgbPreviewView.rotation = cameraRotation.toFloat()
+            val cameraProvider = cameraXProviderFuture?.get() ?: return@addListener
+            tryCount = 0
+            bindCameraXSinglePreview(cameraProvider)
+        }, ContextCompat.getMainExecutor(context))
+    }
+
+    private var tryCount = 0
+
+    private fun bindCameraXSinglePreview(cameraProvider: ProcessCameraProvider) {
+
+        val context = context ?: return
+        val targetCameraId = if (cameraNumbers >= 0) {
+            rgbCameraId
+        } else {
+            0
+        }
+        cameraProvider.unbindAll()
+        val cameraSelector = CameraSelector.Builder()
+            .requireLensFacing(targetCameraId)
+            .build()
+        val preview = Preview.Builder()
+            .build()
+        if (context is LifecycleOwner) {
+            val cameraXSingleImageAnalysis = ImageAnalysis.Builder()
+                .setOutputImageFormat(ImageAnalysis.OUTPUT_IMAGE_FORMAT_YUV_420_888)
+                .setTargetResolution(Size(previewWidth, previewHeight))
+                .build()
+            cameraXSingleImageAnalysis.targetRotation = getCameraXTargetRotation()
+
+            cameraXSingleCamera = cameraProvider.bindToLifecycle(
+                context,
+                cameraSelector,
+                preview,
+                cameraXSingleImageAnalysis
+            )
+            preview.setSurfaceProvider(cameraXRgbPreviewView.surfaceProvider)
+            cameraXSingleImageAnalysis.clearAnalyzer()
+            cameraXSingleImageAnalysis.setAnalyzer(
+                ContextCompat.getMainExecutor(context)
+            ) {
+
+                @androidx.camera.core.ExperimentalGetImage
+                val image = it.image
+                if (image == null) {
+                    it.close()
+                    return@setAnalyzer
+                }
+                val data =
+                    ImageConverter.getByteDataFromImage(image, ImageConverter.COLOR_FormatNV21)
+                val width = it.width
+                val height = it.height
+                it.close()
+                frameListener?.frameDataCameraX(
+                    data,
+                    isMultipleCamera = false,
+                    isRgbData = true,
+                    width,
+                    height
+                )
+            }
+        } else {
+            throw RuntimeException("context not a LifecycleOwner instance")
+        }
+    }
+
+    private fun getCameraXTargetRotation(): Int {
+        return when (cameraRotation) {
+            90 -> {
+                Surface.ROTATION_90
+            }
+            180 -> {
+                Surface.ROTATION_180
+            }
+            270 -> {
+                Surface.ROTATION_270
+            }
+            0 -> {
+                Surface.ROTATION_0
+            }
+            else -> {
+                Surface.ROTATION_0
+            }
         }
     }
 
@@ -1186,6 +1370,21 @@ class CameraPreviewView @JvmOverloads constructor(
      * 计算缩放比例
      */
     private fun calculateProportion() {
+        when (cameraVersion) {
+            CameraVersion.CAMERA2.value -> {
+                calculateProportionCamera2()
+            }
+            CameraVersion.LEGACY.value -> {
+                calculateProportionLegacy()
+            }
+            CameraVersion.CAMERA_X.value -> {
+                calculateProportionCameraX()
+            }
+        }
+
+    }
+
+    private fun calculateProportionCameraX() {
         val surfaceViewWidth: Int
         val surfaceViewHeight: Int
         if (enableCirclePreview) {
@@ -1204,6 +1403,7 @@ class CameraPreviewView @JvmOverloads constructor(
         val cameraWidth: Int
         val cameraHeight: Int
         val layoutParams = faceRelativeLayout.layoutParams as LayoutParams
+
         //判断相机方向需要改变更改宽和高
         if (!needExchangeWidthAndHeight) {
             cameraWidth = previewWidth
@@ -1260,6 +1460,169 @@ class CameraPreviewView @JvmOverloads constructor(
                 faceCameraViewRightOffset = -layoutParams.leftMargin + surfaceViewWidth
                 faceCameraViewTopOffset = 0
                 faceCameraViewBottomOffset = surfaceViewHeight
+
+            }
+
+        faceRelativeLayout.layoutParams = layoutParams
+        faceRelativeLayout.requestLayout()
+    }
+
+    private fun calculateProportionCamera2() {
+        val surfaceViewWidth: Int
+        val surfaceViewHeight: Int
+        if (enableCirclePreview) {
+            if (width < height) {
+                surfaceViewWidth = width
+                surfaceViewHeight = width
+            } else {
+                surfaceViewWidth = height
+                surfaceViewHeight = height
+            }
+        } else {
+            surfaceViewWidth = width
+            surfaceViewHeight = height
+        }
+
+        val cameraWidth: Int
+        val cameraHeight: Int
+        if (needExchangeWidthAndHeight) {
+            cameraWidth = previewHeight
+            cameraHeight = previewWidth
+        } else {
+            cameraWidth = previewWidth
+            cameraHeight = previewHeight
+        }
+        val layoutParams = faceRelativeLayout.layoutParams as LayoutParams
+
+        //如果相机比例相等 不做拉伸
+        if (proportion(
+                surfaceViewWidth, cameraWidth
+            ) == proportion(
+                surfaceViewHeight, cameraHeight
+            )
+        ) {
+            layoutParams.width = surfaceViewWidth
+            layoutParams.height = surfaceViewHeight
+            faceCameraViewWidth = layoutParams.width
+            faceCameraViewHeight = layoutParams.height
+            faceCameraViewLeftOffset = 0
+            faceCameraViewRightOffset = surfaceViewWidth
+            faceCameraViewTopOffset = 0
+            faceCameraViewBottomOffset = surfaceViewHeight
+        } else  //如果相机与画布比例不等 ，计算画布大小 以及识别范围
+            if (proportion(
+                    surfaceViewWidth, cameraWidth
+                ) > proportion(
+                    surfaceViewHeight, cameraHeight
+                )
+            ) {
+                layoutParams.width = surfaceViewWidth
+                layoutParams.height = (cameraHeight * proportion(
+                    surfaceViewWidth, cameraWidth
+                )).toInt()
+                layoutParams.bottomMargin = surfaceViewHeight - layoutParams.height
+                faceCameraViewWidth = layoutParams.width
+                faceCameraViewHeight = layoutParams.height
+                faceCameraViewLeftOffset = 0
+                faceCameraViewRightOffset = surfaceViewWidth
+                faceCameraViewTopOffset = -layoutParams.topMargin
+                faceCameraViewBottomOffset = -layoutParams.topMargin + surfaceViewHeight
+            } //如果相机与画布比例不等 ，计算画布大小 以及识别范围
+            else {
+                layoutParams.width = (cameraWidth * proportion(
+                    surfaceViewHeight, cameraHeight
+                )).toInt()
+                layoutParams.height = surfaceViewHeight
+                layoutParams.leftMargin = (surfaceViewWidth - layoutParams.width) / 2
+                layoutParams.rightMargin = (surfaceViewWidth - layoutParams.width) / 2
+                faceCameraViewWidth = layoutParams.width
+                faceCameraViewHeight = layoutParams.height
+                faceCameraViewLeftOffset = -layoutParams.leftMargin
+                faceCameraViewRightOffset = -layoutParams.leftMargin + surfaceViewWidth
+                faceCameraViewTopOffset = 0
+                faceCameraViewBottomOffset = surfaceViewHeight
+            }
+        faceRelativeLayout.layoutParams = layoutParams
+        faceRelativeLayout.requestLayout()
+    }
+
+    private fun calculateProportionLegacy() {
+        val surfaceViewWidth: Int
+        val surfaceViewHeight: Int
+        if (enableCirclePreview) {
+            if (width < height) {
+                surfaceViewWidth = width
+                surfaceViewHeight = width
+            } else {
+                surfaceViewWidth = height
+                surfaceViewHeight = height
+            }
+        } else {
+            surfaceViewWidth = width
+            surfaceViewHeight = height
+        }
+
+        val cameraWidth: Int
+        val cameraHeight: Int
+        val layoutParams = faceRelativeLayout.layoutParams as LayoutParams
+
+        //判断相机方向需要改变更改宽和高
+        if (!needExchangeWidthAndHeight) {
+            cameraWidth = previewWidth
+            cameraHeight = previewHeight
+        } else {
+            cameraWidth = previewHeight
+            cameraHeight = previewWidth
+        }
+        //如果相机比例相等 不做拉伸
+        if (proportion(
+                surfaceViewWidth, cameraWidth
+            ) == proportion(
+                surfaceViewHeight, cameraHeight
+            )
+        ) {
+            layoutParams.width = surfaceViewWidth
+            layoutParams.height = surfaceViewHeight
+            faceCameraViewWidth = layoutParams.width
+            faceCameraViewHeight = layoutParams.height
+            faceCameraViewLeftOffset = 0
+            faceCameraViewRightOffset = surfaceViewWidth
+            faceCameraViewTopOffset = 0
+            faceCameraViewBottomOffset = surfaceViewHeight
+        } else  //如果相机与画布比例不等 ，计算画布大小 以及识别范围
+            if (proportion(
+                    surfaceViewWidth, cameraWidth
+                ) > proportion(
+                    surfaceViewHeight, cameraHeight
+                )
+            ) {
+                layoutParams.width = surfaceViewWidth
+                layoutParams.height = (cameraHeight * proportion(
+                    surfaceViewWidth, cameraWidth
+                )).toInt()
+                //                layoutParams.topMargin = (surfaceViewHeight - layoutParams.height) / 2;
+                layoutParams.bottomMargin = surfaceViewHeight - layoutParams.height
+                faceCameraViewWidth = layoutParams.width
+                faceCameraViewHeight = layoutParams.height
+                faceCameraViewLeftOffset = 0
+                faceCameraViewRightOffset = surfaceViewWidth
+                faceCameraViewTopOffset = -layoutParams.topMargin
+                faceCameraViewBottomOffset = -layoutParams.topMargin + surfaceViewHeight
+            } //如果相机与画布比例不等 ，计算画布大小 以及识别范围
+            else {
+                layoutParams.width = (cameraWidth * proportion(
+                    surfaceViewHeight, cameraHeight
+                )).toInt()
+                layoutParams.height = surfaceViewHeight
+                layoutParams.leftMargin = (surfaceViewWidth - layoutParams.width) / 2
+                layoutParams.rightMargin = (surfaceViewWidth - layoutParams.width) / 2
+                faceCameraViewWidth = layoutParams.width
+                faceCameraViewHeight = layoutParams.height
+                faceCameraViewLeftOffset = -layoutParams.leftMargin
+                faceCameraViewRightOffset = -layoutParams.leftMargin + surfaceViewWidth
+                faceCameraViewTopOffset = 0
+                faceCameraViewBottomOffset = surfaceViewHeight
+
             }
 
         faceRelativeLayout.layoutParams = layoutParams
@@ -1292,11 +1655,21 @@ class CameraPreviewView @JvmOverloads constructor(
         previewTextureView = CameraTextureView(context)
         faceRelativeLayout.addView(previewTextureView)
 
+        if (cameraVersion == CameraVersion.CAMERA_X.value) {
+            cameraXRgbPreviewView = PreviewView(context)
+            faceRelativeLayout.addView(cameraXRgbPreviewView)
+            val rgbLayoutParams = cameraXRgbPreviewView.layoutParams
+            rgbLayoutParams.width = ViewGroup.LayoutParams.MATCH_PARENT
+            rgbLayoutParams.height = ViewGroup.LayoutParams.MATCH_PARENT
+            cameraXRgbPreviewView.layoutParams = rgbLayoutParams
+        }
+
         if (mirrored) {
             previewTextureView.scaleX = -1f
         } else {
             previewTextureView.scaleX = 1f
         }
+
     }
 
     /**
@@ -1317,12 +1690,19 @@ class CameraPreviewView @JvmOverloads constructor(
     /**
      * 停止旧版相机预览
      */
-    @Suppress("DEPRECATION")
     private fun stopLegacyPreview() {
         warnOut("停止旧版相机预览")
         cameraLegacySingle?.stopPreview()
         cameraLegacyRgb?.stopPreview()
         cameraLegacyIR?.stopPreview()
+
+        cameraLegacySingle?.setPreviewCallback(null)
+        cameraLegacyRgb?.setPreviewCallback(null)
+        cameraLegacyIR?.setPreviewCallback(null)
+
+        cameraLegacySingle?.release()
+        cameraLegacyRgb?.release()
+        cameraLegacyIR?.release()
 
         cameraLegacySingle = null
         cameraLegacyRgb = null
@@ -1335,6 +1715,7 @@ class CameraPreviewView @JvmOverloads constructor(
     @SuppressLint("MissingPermission")
     private fun openCamera2SingleCamera() {
         val cameraId = cameraIdList[0]
+        initCamera2Param()
         if (!isCamera2FullSupport()) {
             errorOut("设备不支持完整的Camera2功能，可能出现未知的异常，可能无法获取预览图像信息")
         }
@@ -1347,6 +1728,7 @@ class CameraPreviewView @JvmOverloads constructor(
      */
     @SuppressLint("MissingPermission")
     private fun openCamera2MultiCamera() {
+        initCamera2Param()
         val cameraRgbId = cameraIdList[rgbCameraId]
         val cameraIrId = cameraIdList[cameraNumbers - rgbCameraId - 1]
         if (!isCamera2FullSupport()) {
@@ -1384,7 +1766,6 @@ class CameraPreviewView @JvmOverloads constructor(
             )
             camera2Rgb?.createCaptureSession(sessionConfiguration)
         } else {
-            @Suppress("DEPRECATION")
             camera2Rgb?.createCaptureSession(
                 listOf(camera2PreviewSurface),
                 camera2RgbSessionCallback,
@@ -1411,7 +1792,6 @@ class CameraPreviewView @JvmOverloads constructor(
             )
             camera2IR?.createCaptureSession(sessionConfiguration)
         } else {
-            @Suppress("DEPRECATION")
             camera2IR?.createCaptureSession(
                 listOf(camera2IrSurface),
                 camera2IrSessionCallback,
@@ -1435,11 +1815,7 @@ class CameraPreviewView @JvmOverloads constructor(
             }
             val outputFormatList: ArrayList<Int> =
                 ArrayList(outputFormats.toMutableList())
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-                initImageLoaderM(outputFormatList, isMultipleCamera = false, isRgb = true)
-            } else {
-                initImageLoader(outputFormatList, isMultipleCamera = false, isRgb = true)
-            }
+            initImageLoader(outputFormatList, isMultipleCamera = false, isRgb = true)
         }
     }
 
@@ -1458,51 +1834,8 @@ class CameraPreviewView @JvmOverloads constructor(
             }
             val outputFormatList: ArrayList<Int> =
                 ArrayList(outputFormats.toMutableList())
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-                initImageLoaderM(outputFormatList, isMultipleCamera = true, isRgb = true)
-            } else {
-                initImageLoader(outputFormatList, isMultipleCamera = true, isRgb = true)
-            }
-        }
-    }
+            initImageLoader(outputFormatList, isMultipleCamera = true, isRgb = true)
 
-    @RequiresApi(Build.VERSION_CODES.M)
-    private fun initImageLoaderM(
-        outputFormatList: java.util.ArrayList<Int>,
-        isMultipleCamera: Boolean,
-        isRgb: Boolean
-    ) {
-        if (outputFormatList.contains(ImageFormat.FLEX_RGB_888)) {
-            if (isMultipleCamera) {
-                if (isRgb) {
-                    camera2RgbImageReader =
-                        ImageReader.newInstance(
-                            previewWidth,
-                            previewHeight,
-                            ImageFormat.FLEX_RGB_888,
-                            2
-                        )
-                } else {
-                    camera2IrImageReader =
-                        ImageReader.newInstance(
-                            previewWidth,
-                            previewHeight,
-                            ImageFormat.FLEX_RGB_888,
-                            2
-                        )
-                }
-            } else {
-                camera2SingleImageReader = ImageReader.newInstance(
-                    previewWidth,
-                    previewHeight,
-                    ImageFormat.FLEX_RGB_888,
-                    2
-                )
-            }
-        } else if (outputFormatList.contains(ImageFormat.YUV_420_888)) {
-            initImageLoader(outputFormatList, isMultipleCamera, isRgb)
-        } else {
-            errorOut("相机不支持使用 ImageFormat.FLEX_RGB_888 或 ImageFormat.YUV_420_888 无法进行人脸识别")
         }
     }
 
@@ -1511,7 +1844,74 @@ class CameraPreviewView @JvmOverloads constructor(
         isMultipleCamera: Boolean,
         isRgb: Boolean
     ) {
-        if (outputFormatList.contains(ImageFormat.YUV_420_888)) {
+
+        for (outputFormat in outputFormatList) {
+            warnOut(
+                "isMultipleCamera $isMultipleCamera isRgb $isRgb supported output format ${
+                    outputFormat.toString(
+                        16
+                    )
+                }"
+            )
+        }
+
+        if (outputFormatList.contains(ImageFormat.NV21)) {
+            if (isMultipleCamera) {
+                if (isRgb) {
+                    camera2RgbImageReader =
+                        ImageReader.newInstance(
+                            previewWidth,
+                            previewHeight,
+                            ImageFormat.NV21,
+                            2
+                        )
+                } else {
+                    camera2IrImageReader =
+                        ImageReader.newInstance(
+                            previewWidth,
+                            previewHeight,
+                            ImageFormat.NV21,
+                            2
+                        )
+                }
+            } else {
+                camera2SingleImageReader =
+                    ImageReader.newInstance(
+                        previewWidth,
+                        previewHeight,
+                        ImageFormat.NV21,
+                        2
+                    )
+            }
+        } else if (outputFormatList.contains(ImageFormat.YV12)) {
+            if (isMultipleCamera) {
+                if (isRgb) {
+                    camera2RgbImageReader =
+                        ImageReader.newInstance(
+                            previewWidth,
+                            previewHeight,
+                            ImageFormat.YV12,
+                            2
+                        )
+                } else {
+                    camera2IrImageReader =
+                        ImageReader.newInstance(
+                            previewWidth,
+                            previewHeight,
+                            ImageFormat.YV12,
+                            2
+                        )
+                }
+            } else {
+                camera2SingleImageReader =
+                    ImageReader.newInstance(
+                        previewWidth,
+                        previewHeight,
+                        ImageFormat.YV12,
+                        2
+                    )
+            }
+        } else if (outputFormatList.contains(ImageFormat.YUV_420_888)) {
             if (isMultipleCamera) {
                 if (isRgb) {
                     camera2RgbImageReader =
@@ -1559,11 +1959,7 @@ class CameraPreviewView @JvmOverloads constructor(
             }
             val outputFormatList: ArrayList<Int> =
                 ArrayList(outputFormats.toMutableList())
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-                initImageLoaderM(outputFormatList, isMultipleCamera = true, isRgb = false)
-            } else {
-                initImageLoader(outputFormatList, isMultipleCamera = true, isRgb = false)
-            }
+            initImageLoader(outputFormatList, isMultipleCamera = true, isRgb = false)
         }
     }
 
@@ -1575,74 +1971,27 @@ class CameraPreviewView @JvmOverloads constructor(
         isMultipleCamera: Boolean,
         isRgb: Boolean
     ) {
-        imageReader ?: return
-        val acquireLatestImage = imageReader.acquireLatestImage()
-        val planes: Array<Image.Plane>
-        if (!isCamera2FullSupport()) {
-            if (acquireLatestImage == null) {
-                if (!isMultipleCamera) {
-                    errorOut("camera2 单目相机 处理数据帧为空")
-                } else {
-                    if (isRgb) {
-                        errorOut("camera2 双目-RGB相机 处理数据帧为空")
-                    } else {
-                        errorOut("camera2 双目-IR相机 处理数据帧为空")
-                    }
-                }
-                return
-            }
-            val planesCache = acquireLatestImage.planes
-            if (planesCache == null || planesCache.isEmpty()) {
-                if (!isMultipleCamera) {
-                    errorOut("camera2 单目相机 planes数据为空")
-                } else {
-                    if (isRgb) {
-                        errorOut("camera2 双目-RGB相机 planes数据为空")
-                    } else {
-                        errorOut("camera2 双目-IR相机 planes数据为空")
-                    }
-                }
-                acquireLatestImage.close()
-                return
-            }
-            planes = planesCache
-        } else {
-            if (acquireLatestImage == null) {
-                if (!isMultipleCamera) {
-                    warnOut("camera2 单目相机 处理数据帧为空")
-                } else {
-                    if (isRgb) {
-                        warnOut("camera2 双目-RGB相机 处理数据帧为空")
-                    } else {
-                        warnOut("camera2 双目-IR相机 处理数据帧为空")
-                    }
-                }
-                return
-            }
-            val planesCache = acquireLatestImage.planes
-            if (planesCache == null || planesCache.isEmpty()) {
-                if (!isMultipleCamera) {
-                    warnOut("camera2 单目相机 planes数据为空")
-                } else {
-                    if (isRgb) {
-                        warnOut("camera2 双目-RGB相机 planes数据为空")
-                    } else {
-                        warnOut("camera2 双目-IR相机 planes数据为空")
-                    }
-                }
-                acquireLatestImage.close()
-                return
-            }
-            planes = planesCache
+        if (imageReader == null) {
+            frameListener?.error(ERR_NO_DATA_HANDLE, "no camera2 data can be handle")
+            return
         }
+        val acquireLatestImage = imageReader.acquireLatestImage()
+        if (acquireLatestImage == null) {
+            frameListener?.error(ERR_NO_DATA_HANDLE, "no camera2 data can be handle")
+            return
+        }
+        val data =
+            ImageConverter.getByteDataFromImage(acquireLatestImage, ImageConverter.COLOR_FormatNV21)
+        val width = acquireLatestImage.width
+        val height = acquireLatestImage.height
+        acquireLatestImage.close()
         frameListener?.frameDataCamera2(
-            planes,
+            data,
             isMultipleCamera = isMultipleCamera,
             isRgbData = isRgb,
-            width = acquireLatestImage.width,
-            height = acquireLatestImage.height
+            width = width,
+            height = height
         )
-        acquireLatestImage.close()
     }
 
     /**
@@ -1657,5 +2006,28 @@ class CameraPreviewView @JvmOverloads constructor(
      */
     private fun isOutCircle(x1: Int, y1: Int, x2: Int, y2: Int, radius: Int): Boolean {
         return sqrt(((x1 - x2) * (x1 - x2) + (y1 - y2) * (y1 - y2)).toDouble()) > radius
+    }
+
+    /**
+     * 初始化camera2相机参数
+     */
+    private fun initCamera2Param() {
+
+        previewTextureView.rotation = camera2RgbRotation.toFloat()
+
+        irTextureView.rotation = camera2IrRotation.toFloat()
+
+        if (isMirrored()) {
+            previewTextureView.scaleX = -1f
+        } else {
+            previewTextureView.scaleX = 1f
+        }
+
+
+        if (needExchangeWidthAndHeight) {
+            previewTextureView.surfaceTexture?.setDefaultBufferSize(previewWidth, previewHeight)
+        } else {
+            previewTextureView.surfaceTexture?.setDefaultBufferSize(previewHeight, previewWidth)
+        }
     }
 }

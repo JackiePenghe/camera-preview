@@ -3,21 +3,45 @@
     <declare-styleable name="CameraPreviewView">
         <!--    相机预览方案    -->
         <attr name="cameraVersion" format="enum">
-            <!--      自动判断      -->
-            <enum name="auto" value="0x00" />
             <!--      使用旧版相机      -->
             <enum name="legacy" value="0x01" />
             <!--      使用camera2      -->
             <enum name="camera2" value="0x02" />
+            <!--      使用cameraX      -->
+            <enum name="cameraX" value="0x03" />
         </attr>
         <!--    RGB相机ID（仅在多个摄像头时可用）    -->
-        <attr name="rgbCameraId" format="integer" />
+        <attr name="rgbCameraId" format="enum">
+            <enum name="cameraFront" value="0" />
+            <enum name="cameraBack" value="1" />
+            <enum name="camera0" value="0" />
+            <enum name="camera1" value="1" />
+        </attr>
         <!--    相机预览分辨率-宽度    -->
         <attr name="previewWidth" format="integer" />
         <!--    相机预览分辨率-高度    -->
         <attr name="previewHeight" format="integer" />
         <!--    相机旋转角度（0，90，180，270）    -->
-        <attr name="cameraRotation" format="integer" />
+        <attr name="cameraRotation" format="enum">
+            <enum name="cameraRotationDefault" value="0" />
+            <enum name="cameraRotation90" value="90" />
+            <enum name="cameraRotation180" value="180" />
+            <enum name="cameraRotation270" value="270" />
+        </attr>
+        <!--    camera2 rgb 相机旋转角度（0，90，180，270）    -->
+        <attr name="camera2RgbRotation" format="enum">
+            <enum name="cameraRotationDefault" value="0" />
+            <enum name="cameraRotation90" value="90" />
+            <enum name="cameraRotation180" value="180" />
+            <enum name="cameraRotation270" value="270" />
+        </attr>
+        <!--   camera2 ir 相机旋转角度（0，90，180，270）    -->
+        <attr name="camera2IrRotation" format="enum">
+            <enum name="cameraRotationDefault" value="0" />
+            <enum name="cameraRotation90" value="90" />
+            <enum name="cameraRotation180" value="180" />
+            <enum name="cameraRotation270" value="270" />
+        </attr>
         <!--    是否使用圆形预览    -->
         <attr name="enableCirclePreview" format="boolean" />
         <!--    是否交换宽高比    -->
@@ -25,6 +49,6 @@
         <!--    是否镜像展示画面内容    -->
         <attr name="cameraMirror" format="boolean" />
         <!--    是否启用双目摄像头    -->
-        <attr name="useMultipleCamera" format="boolean" />
+        <attr name="useMultipleCamera" format="boolean" />\
     </declare-styleable>
 </resources>
